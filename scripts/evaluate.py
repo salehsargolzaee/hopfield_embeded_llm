@@ -54,6 +54,14 @@ def evaluate_model(
             answer = model.tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
             predictions.append(answer)
 
+    # Print first 10 predictions vs ground truth so we can see what's happening
+    logger.info("--- Sample predictions ---")
+    for i in range(min(10, len(predictions))):
+        logger.info(f"  Q: {questions[i]}")
+        logger.info(f"  Pred: {predictions[i][:100]}")
+        logger.info(f"  Gold: {ground_truths[i][0]}")
+        logger.info("")
+
     metrics = compute_squad_metrics(predictions, ground_truths)
     return metrics
 

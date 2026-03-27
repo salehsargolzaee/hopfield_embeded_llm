@@ -29,11 +29,10 @@ embedding:
 
 # --- LLM with Hopfield injection ---
 model:
-  # Qwen 2.5 3B — standard transformer, 36 layers, hidden_dim=2048.
+  # Qwen 2.5 3B Instruct — instruction-tuned so it can answer questions concisely.
   # Using 2.5 instead of 3.5 because 3.5 has a novel mixed linear/full
-  # attention pattern that complicates manual layer injection. 2.5 is
-  # a clean standard architecture, well-tested, and fits easily on 32GB.
-  name: "Qwen/Qwen2.5-3B"
+  # attention pattern that complicates manual layer injection.
+  name: "Qwen/Qwen2.5-3B-Instruct"
   # Which transformer layers to inject memory at (0-indexed, 36 total).
   # Layer 8  = early (broad topic retrieval)
   # Layer 18 = middle (blend relevant docs)
