@@ -53,10 +53,12 @@ class SQuADMemoryDataset(Dataset):
         logger.info(f"Loading SQuAD v2 ({split})")
         dataset = load_dataset("squad_v2", split=split)
 
-        # Build context → chunk index mapping if memory bank info is provided
+        # Build context → chunk index mapping
         context_to_chunk = {}
-        if chunk_texts is not None:
-            context_to_chunk = self._build_context_mapping(dataset, chunk_texts)
+        if chunk_texts is not None and memory_bank is not None:
+            context_to_chunk = self._build_context_mapping_embedding(
+                dataset, chunk_texts, memory_bank, config
+            )
             logger.info(f"Mapped {len(context_to_chunk)} unique contexts to memory chunks")
 
         skipped = 0
@@ -113,34 +115,38 @@ class SQuADMemoryDataset(Dataset):
             f"(skipped {skipped} unanswerable, {no_chunk} with no matching chunk)"
         )
 
-    def _build_context_mapping(self, dataset, chunk_texts: list) -> dict:
-        """Map each SQuAD context paragraph to its nearest memory bank chunk.
+    def _build_context_mapping_embedding(
+        self, dataset, chunk_texts: list, memory_bank: torch.Tensor, config: DictConfig,
+    ) -> dict:
+        """Map each SQuAD context to the nearest memory bank chunk via embedding similarity.
 
-        For each unique context in SQuAD, find which chunk in our memory bank
-        contains it (or is contained by it). Uses string matching, not embeddings.
+        Embeds each unique context with the same model used for the memory bank,
+        then finds the closest chunk by cosine similarity. Much more robust than
+        string matching since chunking changes the text boundaries.
         """
+        from src.embedding.embedder import Embedder
+
+        unique_contexts = list(set(row["context"] for row in dataset))
+        logger.info(f"Embedding {len(unique_contexts)} unique contexts for mapping...")
+
+        embedder = Embedder(config)
+        context_embeddings = embedder.embed_texts(unique_contexts)  # (num_contexts, 768)
+
+        # memory_bank is already (num_chunks, 768) and L2-normalized
+        # context_embeddings are also L2-normalized by the embedder
+        # cosine similarity = dot product
+        memory_np = memory_bank.cpu().numpy()
+        similarities = context_embeddings @ memory_np.T  # (num_contexts, num_chunks)
+
         mapping = {}
-        unique_contexts = set()
-        for row in dataset:
-            unique_contexts.add(row["context"])
+        for i, context in enumerate(unique_contexts):
+            best_chunk_idx = int(similarities[i].argmax())
+            best_sim = float(similarities[i, best_chunk_idx])
+            # Only map if similarity is reasonable (> 0.5)
+            if best_sim > 0.5:
+                mapping[context] = best_chunk_idx
 
-        for context in unique_contexts:
-            context_clean = " ".join(context.split())
-            best_idx = -1
-            best_overlap = 0
-
-            for i, chunk_text in enumerate(chunk_texts):
-                chunk_clean = " ".join(chunk_text.split())
-                # Check containment both ways
-                if chunk_clean in context_clean or context_clean in chunk_clean:
-                    overlap = min(len(chunk_clean), len(context_clean))
-                    if overlap > best_overlap:
-                        best_overlap = overlap
-                        best_idx = i
-
-            if best_idx >= 0:
-                mapping[context] = best_idx
-
+        logger.info(f"Mapped {len(mapping)}/{len(unique_contexts)} contexts (sim > 0.5)")
         return mapping
 
     def __len__(self) -> int:

@@ -42,19 +42,24 @@ def train(model: MemoryInjectedModel, config: DictConfig) -> None:
         weight_decay=config.training.weight_decay,
     )
 
-    # Load chunk texts for context → chunk mapping
+    # Load chunk texts and memory bank for context → chunk mapping
     chunks_path = Path("data/processed/chunks.pkl")
+    memory_path = Path(config.memory.output_dir) / "memory_bank.pt"
     chunk_texts = None
+    memory_bank_cpu = None
     if chunks_path.exists():
         with open(chunks_path, "rb") as f:
             chunks = pickle.load(f)
         chunk_texts = [c.text for c in chunks]
         logger.info(f"Loaded {len(chunk_texts)} chunk texts for retrieval supervision")
+    if memory_path.exists():
+        memory_bank_cpu = torch.load(memory_path, weights_only=True)
 
     train_dataset = SQuADMemoryDataset(
         tokenizer=model.tokenizer,
         config=config,
         split="train",
+        memory_bank=memory_bank_cpu,
         chunk_texts=chunk_texts,
     )
 
