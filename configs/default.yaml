@@ -43,9 +43,9 @@ model:
 
 # --- Training ---
 training:
-  batch_size: 4
+  batch_size: 8
   num_epochs: 3
-  lr: 1.0e-4
+  lr: 1.0e-3
   weight_decay: 0.01
   max_grad_norm: 1.0
   max_seq_length: 256
