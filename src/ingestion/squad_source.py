@@ -41,7 +41,7 @@ class SQuADSource(DocumentSource):
         We deduplicate by context text to get unique paragraphs.
         """
         logger.info(f"Loading SQuAD v2 ({self.split} split)")
-        dataset = load_dataset("squad_v2", split=self.split, trust_remote_code=True)
+        dataset = load_dataset("squad_v2", split=self.split, )
 
         # SQuAD rows are question-level, but we want document-level.
         # Group by article title, collect unique contexts (paragraphs).

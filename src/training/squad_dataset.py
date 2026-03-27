@@ -50,7 +50,7 @@ class SQuADMemoryDataset(Dataset):
         self.examples = []
 
         logger.info(f"Loading SQuAD v2 ({split})")
-        dataset = load_dataset("squad_v2", split=split, trust_remote_code=True)
+        dataset = load_dataset("squad_v2", split=split, )
 
         skipped = 0
         for row in dataset:

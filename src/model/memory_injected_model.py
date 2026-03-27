@@ -40,7 +40,7 @@ class MemoryInjectedModel(nn.Module):
         logger.info(f"Loading {model_name} (frozen)")
         self.llm = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=torch.float16,
+            dtype=torch.float16,
             device_map="auto",
         )
 
@@ -105,52 +105,44 @@ class MemoryInjectedModel(nn.Module):
         attention_mask: torch.Tensor | None = None,
         labels: torch.Tensor | None = None,
     ) -> dict:
-        """Forward pass with memory injection.
+        """Forward pass with memory injection via hooks.
 
-        We can't easily intercept mid-layer in HuggingFace's forward pass,
-        so we manually run through the model's layers. Qwen uses the standard
-        transformer architecture: embed → layers → norm → lm_head.
+        Instead of manually iterating through layers (which breaks across
+        different transformers versions), we register forward hooks on the
+        injection layers. The hooks add the Hopfield memory output to the
+        hidden states as they pass through. This lets HuggingFace handle
+        all the internal plumbing (position embeddings, caching, etc.).
         """
-        # Get the model's internal components
-        model = self.llm.model  # the base transformer (without lm_head)
-        embed_tokens = model.embed_tokens
-        layers = model.layers
-        norm = model.norm
-        lm_head = self.llm.lm_head
+        hooks = []
 
-        # Embedding
-        hidden = embed_tokens(input_ids)
+        def make_hook(layer_idx):
+            def hook_fn(module, input, output):
+                hidden = output[0]
+                memory_out = self.hopfield_layers[str(layer_idx)](hidden.float())
+                modified = hidden + memory_out.to(hidden.dtype)
+                return (modified,) + output[1:]
+            return hook_fn
 
-        # Prepare causal attention mask
-        # We pass through each layer manually
-        batch_size, seq_len = input_ids.shape
-        position_ids = torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand(batch_size, -1)
+        # Register hooks at injection points
+        model_layers = self.llm.model.layers
+        for layer_idx in self.injection_layers:
+            h = model_layers[layer_idx].register_forward_hook(make_hook(layer_idx))
+            hooks.append(h)
 
-        # Run through each transformer layer
-        for i, layer in enumerate(layers):
-            # Standard transformer layer forward
-            layer_output = layer(
-                hidden,
+        try:
+            # Let HuggingFace handle the full forward pass
+            outputs = self.llm(
+                input_ids=input_ids,
                 attention_mask=attention_mask,
-                position_ids=position_ids,
             )
-            hidden = layer_output[0]
-
-            # Inject memory if this is an injection point
-            if str(i) in self.hopfield_layers:
-                memory_output = self.hopfield_layers[str(i)](hidden.float())
-                hidden = hidden + memory_output.to(hidden.dtype)
-
-        # Final norm
-        hidden = norm(hidden)
-
-        # Language model head
-        logits = lm_head(hidden)
+            logits = outputs.logits
+        finally:
+            for h in hooks:
+                h.remove()
 
         # Compute loss if labels provided
         loss = None
         if labels is not None:
-            # Shift logits and labels for next-token prediction
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
 
