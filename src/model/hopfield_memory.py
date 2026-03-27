@@ -86,6 +86,12 @@ class HopfieldMemoryLayer(nn.Module):
         if self.memory_bank is None:
             return torch.zeros_like(hidden)
 
+        # Handle both 2D (seq_len, hidden_dim) and 3D (batch, seq_len, hidden_dim)
+        squeezed = False
+        if hidden.dim() == 2:
+            hidden = hidden.unsqueeze(0)
+            squeezed = True
+
         batch, seq_len, _ = hidden.shape
         num_docs = self.memory_bank.shape[0]
 
@@ -121,5 +127,10 @@ class HopfieldMemoryLayer(nn.Module):
         # Reshape back: (batch, seq_len, memory_dim)
         retrieved = retrieved.transpose(1, 2).contiguous().view(batch, seq_len, self.memory_dim)
 
-        # Project back to hidden dim and return
-        return self.Wo(retrieved)
+        # Project back to hidden dim
+        result = self.Wo(retrieved)
+
+        if squeezed:
+            result = result.squeeze(0)
+
+        return result
