@@ -157,24 +157,24 @@ def _compute_retrieval_loss(
 ) -> torch.Tensor:
     """Cross-entropy loss on retrieval targets.
 
-    For each Hopfield layer, take the retrieval logits at the first token position
-    (the question start) and compute cross-entropy against the correct chunk index.
-    Using the first token because it has the broadest view of the question.
+    Averages retrieval logits across all token positions, then computes
+    cross-entropy against the correct chunk index. Averaging across positions
+    gives a more stable signal than using a single token.
 
     Args:
         retrieval_logits: {layer_idx: (batch, seq_len, num_docs)} from each Hopfield layer
         target_chunks: (batch,) correct chunk indices
 
     Returns:
-        Scalar loss averaged across layers and valid examples.
+        Scalar loss averaged across layers.
     """
     loss_fn = nn.CrossEntropyLoss(ignore_index=-1)
     losses = []
 
     for layer_idx, logits in retrieval_logits.items():
-        # Take logits at the first token position: (batch, num_docs)
-        first_token_logits = logits[:, 0, :]
-        layer_loss = loss_fn(first_token_logits, target_chunks)
+        # Average across all token positions: (batch, num_docs)
+        avg_logits = logits.mean(dim=1)
+        layer_loss = loss_fn(avg_logits, target_chunks)
         losses.append(layer_loss)
 
     if not losses:
