@@ -135,33 +135,14 @@ def train(model: MemoryInjectedModel, config: DictConfig) -> None:
 
 
 def _run_diagnostic(model: MemoryInjectedModel, config: DictConfig) -> None:
-    """Check if the Hopfield layers are attending to sensible documents.
-
-    Feeds a test question through the model and looks at the raw
-    softmax weights in each Hopfield layer.
-    """
-    model.eval()
-
-    test_question = "Question: What is the capital of France?\nAnswer:"
-    device = next(model.parameters()).device
-
-    tokens = model.tokenizer(test_question, return_tensors="pt").to(device)
-
-    with torch.no_grad():
-        # Run the forward pass and collect attention weights from Hopfield layers
-        for layer_idx, hopfield in model.hopfield_layers.items():
-            if hopfield.memory_bank is None:
-                continue
-
-            # Get hidden states at this layer by running through the LLM
-            # (simplified: just log the β values and top attention weight)
-            beta_values = hopfield.beta.detach().cpu()
-            logger.info(
-                f"  Layer {layer_idx} | β: {beta_values.tolist()} | "
-                f"β range: [{beta_values.min():.3f}, {beta_values.max():.3f}]"
-            )
-
-    model.train()
+    """Log Hopfield layer parameter norms as a training health check."""
+    for layer_idx, hopfield in model.hopfield_layers.items():
+        # Report the output projection norm — starts at 0, should grow during training
+        for name, param in hopfield.hopfield.named_parameters():
+            if "out_proj" in name and "weight" in name:
+                norm = param.data.norm().item()
+                logger.info(f"  Layer {layer_idx} | out_proj weight norm: {norm:.6f}")
+                break
 
 
 def _save_checkpoint(
