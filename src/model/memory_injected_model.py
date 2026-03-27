@@ -73,6 +73,10 @@ class MemoryInjectedModel(nn.Module):
             )
             logger.info(f"Created Hopfield memory layer at layer {layer_idx}")
 
+        # Move Hopfield layers to the same device as the LLM
+        device = next(self.llm.parameters()).device
+        self.hopfield_layers = self.hopfield_layers.to(device)
+
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         if self.tokenizer.pad_token is None:
