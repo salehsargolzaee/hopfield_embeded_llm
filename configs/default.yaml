@@ -1,0 +1,56 @@
+seed: 42
+
+# --- Data source (reused from ingestion pipeline) ---
+source:
+  type: "squad"
+  path: "data/raw/"
+  squad_split: "validation"
+  max_articles: null
+
+chunking:
+  strategy: "semantic"
+  max_chunk_tokens: 256
+  overlap_tokens: 32
+  min_chunk_tokens: 20
+
+# --- Memory bank ---
+memory:
+  # Embedding model for the memory bank (not the LLM)
+  embedding_model: "BAAI/bge-base-en-v1.5"
+  embedding_dim: 768
+  output_dir: "data/memory/"
+
+embedding:
+  model_name: "BAAI/bge-base-en-v1.5"
+  dimension: 768
+  batch_size: 64
+  device: "cuda"
+  cache_dir: "data/embeddings/"
+
+# --- LLM with Hopfield injection ---
+model:
+  # Qwen 2.5 3B — standard transformer, 36 layers, hidden_dim=2048.
+  # Using 2.5 instead of 3.5 because 3.5 has a novel mixed linear/full
+  # attention pattern that complicates manual layer injection. 2.5 is
+  # a clean standard architecture, well-tested, and fits easily on 32GB.
+  name: "Qwen/Qwen2.5-3B"
+  # Which transformer layers to inject memory at (0-indexed, 36 total).
+  # Layer 8  = early (broad topic retrieval)
+  # Layer 18 = middle (blend relevant docs)
+  # Layer 30 = late (sharp fact lookup before generation)
+  injection_layers: [8, 18, 30]
+  # Multi-head attention over memory
+  num_heads: 4
+
+# --- Training ---
+training:
+  batch_size: 4
+  num_epochs: 3
+  lr: 1.0e-4
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  max_seq_length: 256
+  output_dir: "checkpoints/"
+  log_every: 10
+  save_every: 500
+  diag_every: 50

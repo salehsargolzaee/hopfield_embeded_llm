@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel>=0.41.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hopfield-embedded-llm"
+version = "0.2.0"
+description = "Hopfield memory layers injected into Qwen for memory-augmented language modeling"
+requires-python = ">=3.10"
+dependencies = [
+    # LLM + tokenizers
+    "transformers>=4.45.0",
+    "accelerate>=0.34.0",
+
+    # Embeddings for memory bank
+    "sentence-transformers>=3.0.0",
+
+    # Dataset loading
+    "datasets>=2.20.0",
+
+    # Config
+    "omegaconf>=2.3.0",
+    "pyyaml>=6.0",
+
+    # Core ML
+    "torch>=2.4.0",
+    "numpy>=1.26.0",
+
+    # Chunking
+    "nltk>=3.9.0",
+
+    # PDF parsing (for future internal docs)
+    "pymupdf>=1.25.0",
+
+    # Progress bars
+    "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
