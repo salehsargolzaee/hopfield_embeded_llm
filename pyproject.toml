@@ -8,6 +8,9 @@ version = "0.2.0"
 description = "Hopfield memory layers injected into Qwen for memory-augmented language modeling"
 requires-python = ">=3.10"
 dependencies = [
+    # Hopfield layers — official implementation from Ramsauer et al.
+    "hflayers @ git+https://github.com/ml-jku/hopfield-layers",
+
     # LLM + tokenizers
     "transformers>=4.45.0",
     "accelerate>=0.34.0",

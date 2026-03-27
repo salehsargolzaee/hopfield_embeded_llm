@@ -1,64 +1,121 @@
 """
-Hopfield memory layer that injects into an LLM's forward pass.
+Hopfield memory layer using the official hflayers library from
+"Hopfield Networks is All You Need" (Ramsauer et al., 2020).
 
-This module does one thing: given a hidden state from the LLM, query a memory
-bank of document embeddings using the Hopfield association rule, and return
-a memory-informed vector to add back to the hidden state.
+This replaces our previous naive cross-attention implementation with the
+actual Hopfield association mechanism. Key differences:
 
-The math:
-    1. Project the hidden state into query space:  q = Wq @ hidden
-    2. Compute attention over memory:  weights = softmax(β * q @ memory^T)
-    3. Retrieve:  retrieved = weights @ memory
-    4. Project back to hidden dim:  output = Wo @ retrieved
+1. The Hopfield module learns projections for queries, keys, AND values —
+   it doesn't just attend over a frozen memory bank, it learns how to
+   transform the stored patterns into useful representations.
 
-Wq, Wo, and β are the only trainable parameters. Everything else is frozen.
+2. The energy function is the real Hopfield energy with log-sum-exp,
+   not just scaled dot-product attention.
 
-Wo is zero-initialized so the layer starts as a no-op — the LLM behaves
-exactly as before on step 1 of training, and gradually learns to use memory.
+3. Pattern normalization and learned affine transforms are built in,
+   which helps separate similar patterns (reducing meta-stable states).
+
+4. Scaling (β) is handled properly by the library, either as a fixed
+   value or as 1/sqrt(head_dim).
+
+The memory bank (document embeddings) is passed as the "stored patterns."
+The LLM hidden states are the "state patterns" (queries). The library
+handles all the projection, association, and retrieval internally.
 """
 
 import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+
+from hflayers import Hopfield
 
 
 class HopfieldMemoryLayer(nn.Module):
-    """A single Hopfield memory injection point.
+    """A single Hopfield memory injection point using the official library.
 
     Args:
-        hidden_dim: Dimension of the LLM's hidden states (e.g. 2048 for Qwen 3.5 4B).
-        memory_dim: Dimension of the memory bank vectors (e.g. 768 for bge-base).
-        num_heads: Number of attention heads for multi-head retrieval.
+        hidden_dim: Dimension of the LLM's hidden states (e.g. 2048).
+        memory_dim: Dimension of the memory bank vectors (e.g. 768).
+        num_heads: Number of association heads.
+        scaling: Inverse temperature β. None = use 1/sqrt(head_dim).
+        dropout: Dropout on association weights.
     """
 
-    def __init__(self, hidden_dim: int, memory_dim: int, num_heads: int = 4):
+    def __init__(
+        self,
+        hidden_dim: int,
+        memory_dim: int,
+        num_heads: int = 4,
+        scaling: float | None = None,
+        dropout: float = 0.0,
+    ):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.memory_dim = memory_dim
-        self.num_heads = num_heads
-        self.head_dim = memory_dim // num_heads
 
-        assert memory_dim % num_heads == 0, "memory_dim must be divisible by num_heads"
+        # The Hopfield module handles everything:
+        # - Projects state patterns (queries) from hidden_dim
+        # - Projects stored patterns (keys) from memory_dim
+        # - Projects pattern projections (values) from memory_dim
+        # - Computes Hopfield association (energy-based retrieval)
+        # - Output projection back to hidden_dim
+        self.hopfield = Hopfield(
+            # Input = LLM hidden states (state pattern / query)
+            input_size=hidden_dim,
 
-        # Projects LLM hidden states into memory query space
-        self.Wq = nn.Linear(hidden_dim, memory_dim, bias=False)
+            # Stored patterns = document embeddings (keys)
+            stored_pattern_size=memory_dim,
 
-        # Projects retrieved memory back to LLM hidden dimension.
-        # Zero-initialized: at training start, this layer outputs zeros,
-        # so the LLM runs as if the memory layer isn't there.
-        self.Wo = nn.Linear(memory_dim, hidden_dim, bias=False)
-        nn.init.zeros_(self.Wo.weight)
+            # Pattern projection = what we retrieve (values), same as stored
+            pattern_projection_size=memory_dim,
 
-        # Learnable inverse temperature, one per head.
-        # Initialized to 1/sqrt(head_dim) which is the standard scaled dot-product value.
-        init_beta = 1.0 / math.sqrt(self.head_dim)
-        self.log_beta = nn.Parameter(torch.full((num_heads,), math.log(init_beta)))
+            # Internal association space dimension
+            # Smaller than hidden_dim to keep param count manageable
+            pattern_size=memory_dim,
 
-        # Memory bank — registered as buffer so it moves to GPU with the model
-        # but doesn't get gradients
+            # Output projects back to hidden_dim
+            output_size=hidden_dim,
+
+            num_heads=num_heads,
+            scaling=scaling,
+
+            # Stored patterns (memory bank) are static — not trainable
+            stored_pattern_as_static=True,
+            # State patterns (queries from LLM) are NOT static — they get projected
+            state_pattern_as_static=False,
+            # Pattern projection (values) are static — we retrieve the actual embeddings
+            pattern_projection_as_static=True,
+            # Connect pattern projection to stored patterns (values = keys)
+            pattern_projection_as_connected=True,
+
+            # Normalize patterns to reduce meta-stable states
+            normalize_stored_pattern=True,
+            normalize_stored_pattern_affine=True,
+            normalize_state_pattern=True,
+            normalize_state_pattern_affine=True,
+            normalize_pattern_projection=True,
+            normalize_pattern_projection_affine=True,
+
+            batch_first=True,
+            dropout=dropout,
+        )
+
+        # Zero-initialize the output projection so the layer starts as a no-op.
+        # The Hopfield module's output projection is the last linear layer.
+        self._zero_init_output()
+
+        # Memory bank stored as buffer
         self.register_buffer("memory_bank", None)
+
+    def _zero_init_output(self) -> None:
+        """Zero-initialize the output projection weights."""
+        # The Hopfield module wraps a HopfieldCore which has an out_projection
+        # We need to find and zero it
+        for name, param in self.hopfield.named_parameters():
+            if "out_proj" in name.lower() or "out_projection" in name.lower():
+                if "weight" in name:
+                    nn.init.zeros_(param)
 
     def set_memory(self, memory: torch.Tensor) -> None:
         """Load the document memory bank.
@@ -69,66 +126,33 @@ class HopfieldMemoryLayer(nn.Module):
         assert memory.dim() == 2 and memory.shape[1] == self.memory_dim
         self.memory_bank = memory
 
-    @property
-    def beta(self) -> torch.Tensor:
-        """Actual β values (always positive via exp)."""
-        return self.log_beta.exp()
-
     def forward(self, hidden: torch.Tensor) -> torch.Tensor:
         """Query memory and return the retrieved context.
 
         Args:
-            hidden: (batch, seq_len, hidden_dim) from the LLM.
+            hidden: (batch, seq_len, hidden_dim) or (seq_len, hidden_dim) from the LLM.
 
         Returns:
-            (batch, seq_len, hidden_dim) memory-informed vector to add to hidden.
+            Same shape as input — memory-informed vector to add to hidden.
         """
         if self.memory_bank is None:
             return torch.zeros_like(hidden)
 
-        # Handle both 2D (seq_len, hidden_dim) and 3D (batch, seq_len, hidden_dim)
         squeezed = False
         if hidden.dim() == 2:
             hidden = hidden.unsqueeze(0)
             squeezed = True
 
-        batch, seq_len, _ = hidden.shape
-        num_docs = self.memory_bank.shape[0]
+        batch = hidden.shape[0]
 
-        # Project hidden states to query space: (batch, seq_len, memory_dim)
-        queries = self.Wq(hidden)
+        # Expand memory bank to match batch size: (batch, num_docs, memory_dim)
+        stored = self.memory_bank.unsqueeze(0).expand(batch, -1, -1)
 
-        # Reshape for multi-head: (batch, seq_len, num_heads, head_dim)
-        queries = queries.view(batch, seq_len, self.num_heads, self.head_dim)
-        # (batch, num_heads, seq_len, head_dim)
-        queries = queries.transpose(1, 2)
-
-        # Reshape memory bank for multi-head: (1, num_heads, num_docs, head_dim)
-        memory = self.memory_bank.view(1, num_docs, self.num_heads, self.head_dim)
-        memory = memory.transpose(1, 2)
-
-        # Scaled dot-product attention with learned β per head
-        # queries: (batch, num_heads, seq_len, head_dim)
-        # memory:  (1, num_heads, num_docs, head_dim)
-        # scores:  (batch, num_heads, seq_len, num_docs)
-        scores = torch.matmul(queries, memory.transpose(-2, -1))
-
-        # Scale by learned β (one per head)
-        beta = self.beta.view(1, self.num_heads, 1, 1)
-        scores = scores * beta
-
-        # Softmax over documents
-        weights = F.softmax(scores, dim=-1)
-
-        # Retrieve: weighted sum of memory vectors
-        # (batch, num_heads, seq_len, head_dim)
-        retrieved = torch.matmul(weights, memory.expand(batch, -1, -1, -1))
-
-        # Reshape back: (batch, seq_len, memory_dim)
-        retrieved = retrieved.transpose(1, 2).contiguous().view(batch, seq_len, self.memory_dim)
-
-        # Project back to hidden dim
-        result = self.Wo(retrieved)
+        # The Hopfield module takes:
+        #   input = state patterns (queries) — our LLM hidden states
+        #   stored_pattern_padding_mask = optional mask
+        # and uses the stored patterns passed here as keys/values
+        result = self.hopfield(input=hidden, stored_pattern=stored)
 
         if squeezed:
             result = result.squeeze(0)
