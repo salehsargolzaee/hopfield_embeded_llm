@@ -14,6 +14,7 @@ produce the right answer given the question + memory access.
 from dataclasses import dataclass
 
 import torch
+import torch.nn.functional as F
 from datasets import load_dataset
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer
@@ -140,7 +141,3 @@ def collate_fn(batch: list[SQuADExample]) -> dict:
         "attention_mask": torch.stack(attention_mask),
         "labels": torch.stack(labels),
     }
-
-
-# Need this import for collate_fn
-import torch.nn.functional as F

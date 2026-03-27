@@ -28,7 +28,8 @@ def train(model: MemoryInjectedModel, config: DictConfig) -> None:
         model: The memory-injected model (LLM frozen, Hopfield layers trainable).
         config: Training config.
     """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # The model is already on GPU via device_map="auto"
+    device = next(model.parameters()).device
     logger.info(f"Training on {device}")
 
     # Only optimize Hopfield parameters

@@ -25,6 +25,40 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _make_memory_hook(hopfield_layer):
+    """Create a forward hook that injects Hopfield memory into a layer's output.
+
+    Handles all output formats that HuggingFace transformer layers might return:
+    - Plain tensor
+    - Tuple of tensors
+    - BaseModelOutput-like objects
+    """
+    def hook_fn(module, input, output):
+        # Extract hidden states from whatever format the layer returns
+        if isinstance(output, tuple):
+            hidden = output[0]
+        elif isinstance(output, torch.Tensor):
+            hidden = output
+        else:
+            # Some HF versions return dataclass-like objects
+            hidden = output[0]
+
+        # Run Hopfield memory retrieval in float32 for stability
+        memory_out = hopfield_layer(hidden.float())
+        modified = hidden + memory_out.to(hidden.dtype)
+
+        # Return in the same format we received
+        if isinstance(output, tuple):
+            return (modified,) + output[1:]
+        elif isinstance(output, torch.Tensor):
+            return modified
+        else:
+            output[0] = modified
+            return output
+
+    return hook_fn
+
+
 class MemoryInjectedModel(nn.Module):
     """Qwen model with Hopfield memory layers injected at configurable points."""
 
@@ -40,7 +74,7 @@ class MemoryInjectedModel(nn.Module):
         logger.info(f"Loading {model_name} (frozen)")
         self.llm = AutoModelForCausalLM.from_pretrained(
             model_name,
-            dtype=torch.float16,
+            torch_dtype=torch.float16,
             device_map="auto",
         )
 
@@ -103,38 +137,26 @@ class MemoryInjectedModel(nn.Module):
         """Count all parameters (frozen + trainable)."""
         return sum(p.numel() for p in self.parameters())
 
+    def _register_hooks(self) -> list:
+        """Register forward hooks at all injection points. Returns hook handles."""
+        hooks = []
+        model_layers = self.llm.model.layers
+        for layer_idx in self.injection_layers:
+            hopfield = self.hopfield_layers[str(layer_idx)]
+            h = model_layers[layer_idx].register_forward_hook(_make_memory_hook(hopfield))
+            hooks.append(h)
+        return hooks
+
     def forward(
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         labels: torch.Tensor | None = None,
     ) -> dict:
-        """Forward pass with memory injection via hooks.
-
-        Instead of manually iterating through layers (which breaks across
-        different transformers versions), we register forward hooks on the
-        injection layers. The hooks add the Hopfield memory output to the
-        hidden states as they pass through. This lets HuggingFace handle
-        all the internal plumbing (position embeddings, caching, etc.).
-        """
-        hooks = []
-
-        def make_hook(layer_idx):
-            def hook_fn(module, input, output):
-                hidden = output[0]
-                memory_out = self.hopfield_layers[str(layer_idx)](hidden.float())
-                modified = hidden + memory_out.to(hidden.dtype)
-                return (modified,) + output[1:]
-            return hook_fn
-
-        # Register hooks at injection points
-        model_layers = self.llm.model.layers
-        for layer_idx in self.injection_layers:
-            h = model_layers[layer_idx].register_forward_hook(make_hook(layer_idx))
-            hooks.append(h)
+        """Forward pass with memory injection via hooks."""
+        hooks = self._register_hooks()
 
         try:
-            # Let HuggingFace handle the full forward pass
             outputs = self.llm(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -159,31 +181,12 @@ class MemoryInjectedModel(nn.Module):
         return {"loss": loss, "logits": logits}
 
     def generate(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
-        """Generate text using the memory-augmented model.
-
-        For generation we use a hook-based approach instead of manual layer
-        iteration, since HuggingFace's generate() handles caching and sampling.
-        """
-        hooks = []
-
-        def make_hook(layer_idx):
-            def hook_fn(module, input, output):
-                hidden = output[0]
-                memory_out = self.hopfield_layers[str(layer_idx)](hidden.float())
-                modified = hidden + memory_out.to(hidden.dtype)
-                return (modified,) + output[1:]
-            return hook_fn
-
-        # Register hooks at injection points
-        model_layers = self.llm.model.layers
-        for layer_idx in self.injection_layers:
-            h = model_layers[layer_idx].register_forward_hook(make_hook(layer_idx))
-            hooks.append(h)
+        """Generate text using the memory-augmented model."""
+        hooks = self._register_hooks()
 
         try:
             output = self.llm.generate(input_ids=input_ids, **kwargs)
         finally:
-            # Always remove hooks
             for h in hooks:
                 h.remove()
 
