@@ -47,12 +47,20 @@ def main() -> None:
     memory_bank = torch.from_numpy(embeddings).float()
     logger.info(f"Memory bank shape: {memory_bank.shape}")
 
-    # Save
+    # Save memory bank
     output_dir = Path(config.memory.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "memory_bank.pt"
     torch.save(memory_bank, output_path)
     logger.info(f"Saved memory bank to {output_path}")
+
+    # Save chunks for retrieval supervision (trainer needs text for context mapping)
+    import pickle
+    chunks_path = Path("data/processed/chunks.pkl")
+    chunks_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(chunks_path, "wb") as f:
+        pickle.dump(chunks, f)
+    logger.info(f"Saved {len(chunks)} chunks to {chunks_path}")
 
 
 if __name__ == "__main__":

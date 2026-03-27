@@ -45,7 +45,7 @@ model:
 training:
   batch_size: 8
   num_epochs: 3
-  lr: 1.0e-3
+  lr: 5.0e-4
   weight_decay: 0.01
   max_grad_norm: 1.0
   max_seq_length: 256
@@ -53,3 +53,6 @@ training:
   log_every: 10
   save_every: 500
   diag_every: 50
+  # Weight for auxiliary retrieval loss. Higher = stronger retrieval supervision.
+  # Total loss = LM_loss + retrieval_loss_weight * retrieval_loss
+  retrieval_loss_weight: 1.0
