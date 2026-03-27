@@ -69,6 +69,7 @@ class MemoryInjectedModel(nn.Module):
         injection_layers = list(config.model.injection_layers)
         memory_dim = config.memory.embedding_dim
         num_heads = config.model.get("num_heads", 4)
+        association_dim = config.model.get("association_dim", 256)
 
         # Load the frozen LLM
         logger.info(f"Loading {model_name} (frozen)")
@@ -104,6 +105,7 @@ class MemoryInjectedModel(nn.Module):
                 hidden_dim=self.hidden_dim,
                 memory_dim=memory_dim,
                 num_heads=num_heads,
+                association_dim=association_dim,
             )
             logger.info(f"Created Hopfield memory layer at layer {layer_idx}")
 
