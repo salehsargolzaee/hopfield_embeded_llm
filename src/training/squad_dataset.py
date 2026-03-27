@@ -24,8 +24,8 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Simple prompt template — question goes in, model generates the answer
-PROMPT_TEMPLATE = "Question: {question}\nAnswer:"
+# We build the prompt using the tokenizer's chat template at runtime,
+# so no static template here. The system message instructs brevity.
 
 
 @dataclass
