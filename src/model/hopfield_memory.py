@@ -128,8 +128,14 @@ class HopfieldMemoryLayer(nn.Module):
         # Project memory bank to key space
         keys = F.linear(self.memory_bank, k_weight)  # (num_docs, assoc_dim * heads)
 
-        # Compute retrieval logits: dot product between queries and keys
-        # (batch, seq_len, assoc_dim * heads) @ (assoc_dim * heads, num_docs)
-        logits = torch.matmul(queries, keys.T)
+        # L2-normalize both so dot product = cosine similarity (bounded [-1, 1])
+        queries = F.normalize(queries, p=2, dim=-1)
+        keys = F.normalize(keys, p=2, dim=-1)
+
+        # Scaled cosine similarity — temperature controls sharpness
+        # Using sqrt(dim) scaling like standard attention
+        import math
+        scale = math.sqrt(queries.shape[-1])
+        logits = torch.matmul(queries, keys.T) * scale
 
         return logits
