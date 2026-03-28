@@ -254,23 +254,25 @@ def main() -> None:
     logger.info("\nSample generations (with memory):")
     generate_samples(model, questions, answers, use_memory=True, n=5)
 
-    # === Condition 4: Shuffled memory (wrong documents) ===
+    # === Condition 4: Half memory (remove half the chunks) ===
     logger.info("=" * 60)
-    logger.info("Condition 4: SHUFFLED MEMORY (real docs but wrong associations)")
+    logger.info("Condition 4: HALF MEMORY (only keep every other chunk)")
     logger.info("=" * 60)
-    # Shuffle the memory bank so documents are in the wrong positions.
-    # The Hopfield layers will retrieve real documents, but they won't
-    # correspond to the questions being asked.
+    # If the model is selectively retrieving, removing chunks should hurt
+    # performance on questions whose answers were in the removed chunks.
     device = next(model.parameters()).device
-    shuffled_memory = memory_bank[torch.randperm(memory_bank.shape[0])].to(device)
-    model.set_memory(shuffled_memory)
+    half_memory = memory_bank[::2].to(device)  # keep even-indexed chunks only
+    model.set_memory(half_memory)
 
-    shuffled = compute_answer_perplexity(
+    half = compute_answer_perplexity(
         model, questions, answers,
         contexts=None, use_memory=True,
-        desc="Shuffled memory",
+        desc="Half memory",
     )
-    logger.info(f"  Loss: {shuffled['avg_loss']:.4f} | Perplexity: {shuffled['perplexity']:.2f}")
+    logger.info(f"  Loss: {half['avg_loss']:.4f} | Perplexity: {half['perplexity']:.2f}")
+
+    # Restore full memory before next test
+    model.set_memory(memory_bank.to(device))
 
     # === Condition 5: Random memory (pure noise) ===
     logger.info("=" * 60)
@@ -303,16 +305,16 @@ def main() -> None:
     logger.info(f"  {'No context':<25} {no_ctx['avg_loss']:>8.4f} {no_ctx['perplexity']:>12.2f}")
     logger.info(f"  {'RAG context':<25} {rag_ctx['avg_loss']:>8.4f} {rag_ctx['perplexity']:>12.2f}")
     logger.info(f"  {'Hopfield memory':<25} {hopfield['avg_loss']:>8.4f} {hopfield['perplexity']:>12.2f}")
-    logger.info(f"  {'Shuffled memory':<25} {shuffled['avg_loss']:>8.4f} {shuffled['perplexity']:>12.2f}")
+    logger.info(f"  {'Half memory':<25} {half['avg_loss']:>8.4f} {half['perplexity']:>12.2f}")
     logger.info(f"  {'Random memory':<25} {random_mem['avg_loss']:>8.4f} {random_mem['perplexity']:>12.2f}")
     logger.info("")
     logger.info("How to read this:")
     logger.info("  - Lower perplexity = model assigns higher probability to correct answer")
     logger.info("  - RAG context is the upper bound (model sees the answer paragraph directly)")
     logger.info("  - No context is the lower bound (model relies on parametric knowledge only)")
-    logger.info("  - Hopfield memory should be between these two (memory helps but isn't as direct)")
-    logger.info("  - If Shuffled/Random ≈ Hopfield: model ignores memory content (bad)")
-    logger.info("  - If Shuffled/Random > Hopfield: model relies on memory and wrong memory hurts (good)")
+    logger.info("  - Hopfield memory should be between these two")
+    logger.info("  - If Half memory > Hopfield: model uses specific chunks, not just general signal (good)")
+    logger.info("  - If Random >> Hopfield: model relies on real document content (good)")
 
 
 if __name__ == "__main__":
