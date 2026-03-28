@@ -44,6 +44,7 @@ class HopfieldMemoryLayer(nn.Module):
         num_heads: int = 4,
         association_dim: int = 256,
         scaling: Optional[float] = None,
+        update_steps: int = 3,
         dropout: float = 0.0,
     ):
         super().__init__()
@@ -59,7 +60,14 @@ class HopfieldMemoryLayer(nn.Module):
             hidden_size=association_dim,
             output_size=hidden_dim,
             num_heads=num_heads,
-            scaling=scaling,
+            # Higher β for sharper retrieval. Default 1/sqrt(dim) is too soft
+            # for 1245 documents — the softmax spreads weight everywhere.
+            scaling=scaling if scaling is not None else 0.5,
+            # Enable Hopfield iterative convergence — this is the whole point.
+            # The state pattern iterates through the energy landscape to converge
+            # on the nearest stored pattern instead of doing a single-pass average.
+            update_steps_max=update_steps,
+            update_steps_eps=1e-4,
             normalize_stored_pattern=True,
             normalize_stored_pattern_affine=True,
             normalize_state_pattern=True,
