@@ -29,6 +29,7 @@ def main():
     parser.add_argument("--hierarchical", action="store_true")
     parser.add_argument("--sparse", action="store_true")
     parser.add_argument("--query-pinned", action="store_true")
+    parser.add_argument("--dual", action="store_true")
     parser.add_argument("--max-questions", type=int, default=20)
     args = parser.parse_args()
 
@@ -42,7 +43,10 @@ def main():
     chunk_sources = [c.source_doc for c in chunks]
 
     # Load model
-    if args.query_pinned:
+    if args.dual:
+        from src.model.dual_loss_model import DualLossModel
+        model = DualLossModel(config)
+    elif args.query_pinned:
         from src.model.query_pinned_model import QueryPinnedModel
         model = QueryPinnedModel(config)
     elif args.hierarchical:
@@ -81,7 +85,7 @@ def main():
 
     # Load embedder if query-pinned
     question_embedder = None
-    if args.query_pinned:
+    if args.query_pinned or args.dual:
         from src.embedding.embedder import Embedder
         question_embedder = Embedder(config)
 
@@ -97,7 +101,7 @@ def main():
                 attention_mask=inputs["attention_mask"],
                 track_sparsity=True,
             )
-            if question_embedder is not None and hasattr(model, '_question_embedding'):
+            if question_embedder is not None:
                 q_emb = torch.from_numpy(
                     question_embedder.embed_texts([q['question']])
                 ).float().to(device)
