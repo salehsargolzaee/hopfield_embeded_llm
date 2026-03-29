@@ -11,6 +11,10 @@ dependencies = [
     # Hopfield layers — official implementation from Ramsauer et al.
     "hflayers @ git+https://github.com/ml-jku/hopfield-layers",
 
+    # Sparse attention (entmax) for sparse Hopfield networks
+    # Santos et al., "Sparse and Structured Hopfield Networks", ICML 2024
+    "entmax>=1.3",
+
     # LLM + tokenizers
     "transformers>=4.45.0",
     "accelerate>=0.34.0",
