@@ -104,12 +104,12 @@ class SparseHopfieldMemoryLayer(nn.Module):
         return self.log_beta.exp()
 
     def _get_projected_memory(self) -> tuple:
-        """Project memory bank to key/value space. Cached across forward calls."""
-        if self._cached_K is None or self._cached_V is None:
-            normed = self.norm_stored(self.memory_bank)  # (num_docs, memory_dim)
-            self._cached_K = self.Wk(normed)  # (num_docs, total_head_dim)
-            self._cached_V = self.Wv(normed)  # (num_docs, total_head_dim)
-        return self._cached_K, self._cached_V
+        """Project memory bank to key/value space. Recomputed each forward pass
+        to keep the computation graph fresh for backward."""
+        normed = self.norm_stored(self.memory_bank)  # (num_docs, memory_dim)
+        K = self.Wk(normed)  # (num_docs, total_head_dim)
+        V = self.Wv(normed)  # (num_docs, total_head_dim)
+        return K, V
 
     def forward(self, hidden: torch.Tensor) -> torch.Tensor:
         """Inject sparse memory signal into hidden states.
