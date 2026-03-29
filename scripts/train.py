@@ -26,6 +26,8 @@ def main() -> None:
                         help="Use sparse Hopfield (entmax) instead of dense (softmax)")
     parser.add_argument("--hierarchical", action="store_true",
                         help="Use hierarchical sparse Hopfield with energy initialization cascade")
+    parser.add_argument("--query-pinned", action="store_true",
+                        help="Use query-pinned Hopfield (question embedding drives retrieval)")
     args = parser.parse_args()
 
     config = OmegaConf.load(args.config)
@@ -39,7 +41,11 @@ def main() -> None:
     memory_bank = torch.load(memory_path, weights_only=True)
     logger.info(f"Loaded memory bank: {memory_bank.shape}")
 
-    if args.hierarchical:
+    if args.query_pinned:
+        from src.model.query_pinned_model import QueryPinnedModel
+        logger.info("Using QUERY-PINNED Hopfield (question embedding drives retrieval)")
+        model = QueryPinnedModel(config)
+    elif args.hierarchical:
         from src.model.hierarchical_model import HierarchicalSparseModel
         logger.info("Using HIERARCHICAL sparse Hopfield (energy initialization cascade)")
         model = HierarchicalSparseModel(config)

@@ -32,7 +32,8 @@ class SQuADExample:
     attention_mask: torch.Tensor
     labels: torch.Tensor
     question_length: int
-    target_chunk_idx: int  # index into memory bank for retrieval loss
+    target_chunk_idx: int
+    question_text: str = ""
 
 
 class SQuADMemoryDataset(Dataset):
@@ -108,6 +109,7 @@ class SQuADMemoryDataset(Dataset):
                 "labels": labels,
                 "question_length": prompt_length,
                 "target_chunk_idx": target_idx,
+                "question_text": question,
             })
 
         logger.info(
@@ -160,6 +162,7 @@ class SQuADMemoryDataset(Dataset):
             labels=torch.tensor(ex["labels"], dtype=torch.long),
             question_length=ex["question_length"],
             target_chunk_idx=ex["target_chunk_idx"],
+            question_text=ex.get("question_text", ""),
         )
 
 
@@ -184,4 +187,5 @@ def collate_fn(batch: list[SQuADExample]) -> dict:
         "attention_mask": torch.stack(attention_mask),
         "labels": torch.stack(labels),
         "target_chunk_idxs": torch.tensor(target_chunk_idxs, dtype=torch.long),
+        "question_texts": [ex.question_text for ex in batch],
     }

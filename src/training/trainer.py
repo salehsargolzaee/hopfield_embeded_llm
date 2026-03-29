@@ -74,7 +74,15 @@ def train(model, config: DictConfig) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     has_sparsity = hasattr(model, 'log_sparsity')
+    needs_question_emb = hasattr(model, '_question_embedding')
     metrics = MetricsLogger(config.evaluation.get("output_dir", "data/results"))
+
+    # If model needs question embeddings, load the embedder
+    question_embedder = None
+    if needs_question_emb:
+        from src.embedding.embedder import Embedder
+        question_embedder = Embedder(config)
+        logger.info("Loaded question embedder for query-pinned model")
 
     global_step = 0
     model.train()
@@ -90,19 +98,21 @@ def train(model, config: DictConfig) -> None:
             labels = batch["labels"].to(device)
 
             track = has_sparsity and (global_step % diag_every == 0)
+
+            fwd_kwargs = dict(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels,
+            )
             if has_sparsity:
-                outputs = model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    labels=labels,
-                    track_sparsity=track,
-                )
-            else:
-                outputs = model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    labels=labels,
-                )
+                fwd_kwargs["track_sparsity"] = track
+            if needs_question_emb and "question_texts" in batch:
+                q_embs = torch.from_numpy(
+                    question_embedder.embed_texts(batch["question_texts"])
+                ).float().to(device)
+                fwd_kwargs["question_embedding"] = q_embs
+
+            outputs = model(**fwd_kwargs)
 
             loss = outputs["loss"]
 
