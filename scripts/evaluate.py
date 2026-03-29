@@ -175,6 +175,7 @@ def main() -> None:
     parser.add_argument("--config", type=str, default="configs/default.yaml")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--max-samples", type=int, default=500)
+    parser.add_argument("--sparse", action="store_true", help="Use sparse Hopfield model")
     args = parser.parse_args()
 
     config = OmegaConf.load(args.config)
@@ -201,7 +202,11 @@ def main() -> None:
     logger.info(f"Evaluating on {len(questions)} questions")
 
     # Build model
-    model = MemoryInjectedModel(config)
+    if args.sparse:
+        from src.model.sparse_injected_model import SparseInjectedModel
+        model = SparseInjectedModel(config)
+    else:
+        model = MemoryInjectedModel(config)
 
     # Load memory bank
     memory_path = Path(config.memory.output_dir) / "memory_bank.pt"
