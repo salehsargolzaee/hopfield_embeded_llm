@@ -93,7 +93,7 @@ def main():
     phase1_lr = config.training.get("phase1_lr", 1e-3)
 
     logger.info("=" * 60)
-    logger.info(f"PHASE 1: Router warm-up ({phase1_steps} steps, MSE loss)")
+    logger.info(f"PHASE 1: Router warm-up ({phase1_steps} steps, CE loss)")
     logger.info("=" * 60)
 
     # Only optimize router params in phase 1
@@ -134,7 +134,7 @@ def main():
 
         step += 1
         if step % log_every == 0:
-            logger.info(f"Phase 1 | Step {step}/{phase1_steps} | MSE: {loss.item():.6f} | Time: {time.time()-start:.1f}s")
+            logger.info(f"Phase 1 | Step {step}/{phase1_steps} | Ret loss: {loss.item():.4f} | Time: {time.time()-start:.1f}s")
 
     # Check retrieval accuracy
     _check_accuracy(model, embedder, examples[:500], device)
