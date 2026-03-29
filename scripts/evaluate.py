@@ -176,6 +176,7 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--max-samples", type=int, default=500)
     parser.add_argument("--sparse", action="store_true", help="Use sparse Hopfield model")
+    parser.add_argument("--hierarchical", action="store_true", help="Use hierarchical sparse Hopfield")
     args = parser.parse_args()
 
     config = OmegaConf.load(args.config)
@@ -202,7 +203,10 @@ def main() -> None:
     logger.info(f"Evaluating on {len(questions)} questions")
 
     # Build model
-    if args.sparse:
+    if args.hierarchical:
+        from src.model.hierarchical_model import HierarchicalSparseModel
+        model = HierarchicalSparseModel(config)
+    elif args.sparse:
         from src.model.sparse_injected_model import SparseInjectedModel
         model = SparseInjectedModel(config)
     else:
