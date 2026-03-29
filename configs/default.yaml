@@ -65,7 +65,7 @@ training:
   retrieval_loss_weight: 1.0
   # Phase 1: warm-up the router on retrieval only (no LLM forward pass)
   phase1_steps: 10000
-  phase1_lr: 5.0e-3
+  phase1_lr: 5.0e-4
   # Teacher forcing: fraction of phase 2 batches that use the correct document
   # Decays by 0.5x each epoch (0.5 → 0.25 → 0.125)
   teacher_forcing_ratio: 0.5
