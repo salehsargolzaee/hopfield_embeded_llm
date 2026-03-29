@@ -97,13 +97,16 @@ class HopfieldPoolingRouter(nn.Module):
 
         batch = query_embedding.shape[0]
 
-        # Hopfield convergence
+        # Hopfield convergence: query walks through energy landscape
         state = query_embedding.unsqueeze(1)  # (batch, 1, dim)
         stored = self.memory_bank.unsqueeze(0).expand(batch, -1, -1)  # (batch, docs, dim)
         converged = self.hopfield((stored, state, stored)).squeeze(1)  # (batch, dim)
 
+        # Combine raw query + converged state — the retrieval head sees both
+        combined = query_embedding + converged
+
         # Retrieval head: map to document selection space
-        retrieval_query = self.retrieval_head(converged)  # (batch, dim)
+        retrieval_query = self.retrieval_head(combined)  # (batch, dim)
         retrieval_query = F.normalize(retrieval_query, dim=-1)
         memory_norm = F.normalize(self.memory_bank, dim=-1)
 
