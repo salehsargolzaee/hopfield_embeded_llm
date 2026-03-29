@@ -61,6 +61,10 @@ def main():
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--hidden-size", type=int, default=64,
+                        help="Association space dimension per head")
+    parser.add_argument("--num-heads", type=int, default=16,
+                        help="Number of Hopfield association heads")
     parser.add_argument("--noise", type=float, default=0.0,
                         help="Gaussian noise std added to inputs (0 = use question embeddings as-is)")
     args = parser.parse_args()
@@ -115,8 +119,8 @@ def main():
     # Build retriever
     retriever = PoolingRetriever(
         dim=config.memory.embedding_dim,
-        num_heads=8,
-        hidden_size=8,
+        num_heads=args.num_heads,
+        hidden_size=args.hidden_size,
         scaling=0.25,
         update_steps=5,
     ).to(device)
