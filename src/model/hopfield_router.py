@@ -1,70 +1,56 @@
 """
-Hopfield router — selects documents to prepend to the LLM's input.
+Hopfield router using HopfieldPooling as a denoising retriever.
 
-Instead of injecting a compressed vector into the LLM's hidden states,
-the router uses Hopfield energy-based convergence to select the most
-relevant document(s) from the memory bank. The selected documents' raw
-text is prepended to the prompt, giving the LLM full token-level access.
+Based on the approach from Sargolzaei & Rueda (2024): the HopfieldPooling
+layer is trained as a denoiser — given a partial/noisy input (question
+embedding), it converges to the nearest stored pattern (document embedding).
 
-The key difference from standard dense retrieval (cosine/dot product):
-the Hopfield update rule iterates through the energy landscape, converging
-to the nearest stored pattern. This produces sharper, more committed
-retrieval decisions — especially useful when documents are semantically
-similar (common in enterprise department knowledge bases).
+Training: MSE between pooling output and the correct document embedding.
+Inference: output vector → cosine similarity against memory bank → top-k.
 
-Flow:
-  1. Embed the question using the same model as the memory bank
-  2. Use Hopfield convergence to find the nearest stored pattern(s)
-  3. Map the converged pattern back to the original document text
-  4. Prepend that text to the LLM's input
+This is simpler and more stable than cross-entropy over 1,245 classes
+because MSE regression is a continuous objective — the model learns to
+move toward the right embedding rather than classifying among thousands.
 """
 
-from typing import Optional, Tuple
+from typing import Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from hflayers import Hopfield
+from hflayers import HopfieldPooling
 
 
-class HopfieldRouter(nn.Module):
-    """Selects documents from memory bank using Hopfield energy minimization.
+class HopfieldPoolingRouter(nn.Module):
+    """Selects documents using HopfieldPooling denoising.
 
     Args:
-        query_dim: Dimension of query embeddings (from the embedding model).
-        memory_dim: Dimension of memory bank vectors (should match query_dim).
+        memory_dim: Dimension of memory bank vectors (768 for BGE-base).
         num_heads: Number of Hopfield association heads.
-        association_dim: Internal association space dimension.
-        scaling: Inverse temperature β. Higher = sharper convergence.
-        update_steps: Number of Hopfield update iterations.
+        scaling: Inverse temperature β.
+        update_steps: Hopfield convergence iterations.
         top_k: How many documents to retrieve.
     """
 
     def __init__(
         self,
-        query_dim: int,
-        memory_dim: int,
-        num_heads: int = 4,
-        association_dim: int = 256,
-        scaling: float = 2.0,
+        memory_dim: int = 768,
+        num_heads: int = 16,
+        scaling: float = 0.25,
         update_steps: int = 5,
-        top_k: int = 3,
+        top_k: int = 1,
     ):
         super().__init__()
-        self.query_dim = query_dim
         self.memory_dim = memory_dim
         self.top_k = top_k
 
-        # The Hopfield module handles the energy-based convergence.
-        # Query = question embedding, stored patterns = document embeddings.
-        # After convergence, we look at which stored patterns the state
-        # converged toward (the convergence weights).
-        self.hopfield = Hopfield(
-            input_size=query_dim,
-            stored_pattern_size=memory_dim,
-            pattern_projection_size=memory_dim,
-            hidden_size=association_dim,
+        # HopfieldPooling: input = memory bank, pooling weights = query
+        # The pooling layer learns to converge from a question embedding
+        # toward the nearest stored document embedding.
+        self.pooling = HopfieldPooling(
+            input_size=memory_dim,
+            hidden_size=memory_dim // num_heads,
             output_size=memory_dim,
             num_heads=num_heads,
             scaling=scaling,
@@ -77,54 +63,52 @@ class HopfieldRouter(nn.Module):
             normalize_pattern_projection=True,
             normalize_pattern_projection_affine=True,
             batch_first=True,
+            quantity=1,
+            trainable=True,
         )
 
         self.register_buffer("memory_bank", None)
 
     def set_memory(self, memory: torch.Tensor) -> None:
-        """Load the document memory bank."""
         assert memory.dim() == 2 and memory.shape[1] == self.memory_dim
         self.memory_bank = memory
 
     def forward(
         self, query_embedding: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Route a query to the most relevant documents.
+        """Route queries to documents.
+
+        The trick: we replace the pooling layer's learned query with the
+        actual question embedding before each forward pass. This makes the
+        retrieval query-dependent (not static).
 
         Args:
-            query_embedding: (batch, query_dim) embedded question.
+            query_embedding: (batch, memory_dim) question embeddings.
 
         Returns:
-            top_indices: (batch, top_k) indices into the memory bank.
-            convergence_scores: (batch, num_docs) the Hopfield convergence
-                weights over all documents (for the retrieval loss).
+            top_indices: (batch, top_k) indices into memory bank.
+            pooled_output: (batch, memory_dim) the converged embedding
+                (used for MSE loss during training).
         """
         if self.memory_bank is None:
-            raise ValueError("Call set_memory() before routing")
+            raise ValueError("Call set_memory() first")
 
         batch = query_embedding.shape[0]
 
-        # Add sequence dim: (batch, 1, query_dim) — single query per example
-        query = query_embedding.unsqueeze(1)
+        # Override the pooling weights with the question embedding
+        # so the Hopfield convergence starts from the question
+        # and walks toward the nearest stored document pattern
+        self.pooling.pooling_weights.data = query_embedding.unsqueeze(1).detach().clone()
 
-        # Stored patterns: (batch, num_docs, memory_dim)
+        # Feed the memory bank as input — pooling attends over all documents
         stored = self.memory_bank.unsqueeze(0).expand(batch, -1, -1)
+        pooled = self.pooling(stored)  # (batch, memory_dim)
 
-        # Run Hopfield convergence — the state iterates toward the nearest
-        # energy minimum in the pattern space
-        # Output: (batch, 1, memory_dim) — the converged state
-        converged = self.hopfield((stored, query, stored))
-        converged = converged.squeeze(1)  # (batch, memory_dim)
-
-        # Compute similarity between converged state and all stored patterns.
-        # The converged state should be very close to one (or few) stored patterns.
-        # This gives us the "convergence weights" — how much each document
-        # contributed to the energy minimum the query fell into.
-        converged_norm = F.normalize(converged, p=2, dim=-1)
+        # Find nearest documents by cosine similarity
+        pooled_norm = F.normalize(pooled, p=2, dim=-1)
         memory_norm = F.normalize(self.memory_bank, p=2, dim=-1)
-        convergence_scores = torch.matmul(converged_norm, memory_norm.T)  # (batch, num_docs)
+        similarities = torch.matmul(pooled_norm, memory_norm.T)  # (batch, num_docs)
 
-        # Select top-k documents
-        top_scores, top_indices = convergence_scores.topk(self.top_k, dim=-1)
+        _, top_indices = similarities.topk(self.top_k, dim=-1)
 
-        return top_indices, convergence_scores
+        return top_indices, pooled

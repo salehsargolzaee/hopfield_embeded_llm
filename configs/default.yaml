@@ -40,14 +40,14 @@ model:
   injection_layers: [8, 18, 30]
   # Multi-head attention over memory
   num_heads: 4
-  # Hopfield update steps — the iterative energy minimization that makes
-  # Hopfield different from standard attention. 0 = single-pass (no convergence).
-  # 3 = three iterations of the update rule, allowing the query to converge
-  # toward the nearest stored pattern.
+  # Internal Hopfield layers config
   update_steps: 3
-  # Inverse temperature β. Higher = sharper retrieval. Default library value
-  # (1/sqrt(dim)) is too soft for 1000+ documents.
   scaling: 0.5
+  # HopfieldPooling router config (denoising-based document selection)
+  router_num_heads: 16
+  router_scaling: 0.25
+  router_update_steps: 5
+  top_k: 1
 
 # --- Training ---
 training:
