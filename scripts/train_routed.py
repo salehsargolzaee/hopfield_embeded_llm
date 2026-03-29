@@ -120,12 +120,12 @@ def main():
         # Embed questions
         query_embs = torch.from_numpy(embedder.embed_texts(questions)).float().to(device)
 
-        # Router forward — get pooled output
-        _, pooled = model.router(query_embs)
+        # Router forward — get retrieval logits
+        _, logits = model.router(query_embs)
 
-        # MSE loss: pooled output should match target document embedding
-        target_embs = model.router.memory_bank[target_idxs]
-        loss = F.mse_loss(pooled, target_embs)
+        # Cross-entropy loss on retrieval logits
+        loss_fn = torch.nn.CrossEntropyLoss(ignore_index=-1)
+        loss = loss_fn(logits, target_idxs)
 
         optimizer.zero_grad()
         loss.backward()

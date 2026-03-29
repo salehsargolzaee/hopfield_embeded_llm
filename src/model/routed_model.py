@@ -11,6 +11,7 @@ convergence → nearest document embedding → prepend document text.
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from omegaconf import DictConfig
 from typing import Optional
@@ -153,8 +154,8 @@ class RoutedModel(nn.Module):
         device = next(self.llm.parameters()).device
         batch_size = len(questions)
 
-        # Step 1: Route — get top documents and pooled embedding
-        top_indices, pooled_output = self.router(query_embeddings)
+        # Step 1: Route — get top documents and retrieval logits
+        top_indices, logits = self.router(query_embeddings)
 
         # Step 2: Build prompts with retrieved document prepended
         lm_loss = torch.tensor(0.0, device=device)
@@ -197,18 +198,18 @@ class RoutedModel(nn.Module):
 
         lm_loss = lm_loss / max(batch_size, 1)
 
-        # Step 3: Router MSE loss — denoising objective
-        # pooled_output should converge toward the correct document embedding
+        # Step 3: Router cross-entropy loss
+        # logits = (batch, num_docs) retrieval scores
         router_loss = torch.tensor(0.0, device=device)
         if target_chunk_idxs is not None:
-            target_embeddings = self.router.memory_bank[target_chunk_idxs]  # (batch, memory_dim)
-            router_loss = F.mse_loss(pooled_output, target_embeddings)
+            loss_fn_ret = nn.CrossEntropyLoss(ignore_index=-1)
+            router_loss = loss_fn_ret(logits, target_chunk_idxs)
 
         return {
             "loss": lm_loss,
             "router_loss": router_loss,
             "top_indices": top_indices,
-            "pooled_output": pooled_output,
+            "logits": logits,
         }
 
     def generate(self, query_embedding: torch.Tensor, question: str, max_new_tokens: int = 50) -> str:
