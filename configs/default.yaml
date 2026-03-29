@@ -40,6 +40,7 @@ model:
   injection_layers: [8, 18, 30]
   # Multi-head attention over memory
   num_heads: 4
+  head_dim: 64
   # Internal Hopfield layers config
   update_steps: 3
   scaling: 0.5
