@@ -51,7 +51,7 @@ model:
 
 # --- Training ---
 training:
-  batch_size: 32
+  batch_size: 4
   num_epochs: 3
   lr: 2.0e-4
   weight_decay: 0.01
