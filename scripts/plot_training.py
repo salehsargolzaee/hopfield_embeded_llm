@@ -117,7 +117,14 @@ def main():
 
     # --- Plot 4: Sparsity bar chart (final state) ---
     if layer_indices:
-        last = records[-1]
+        # Find the last record that actually has sparsity data
+        last = None
+        for r in reversed(records):
+            if any(f"layer_{idx}_nonzero" in r for idx in layer_indices):
+                last = r
+                break
+        if last is None:
+            last = records[-1]
         fig, ax = plt.subplots(figsize=(8, 5))
 
         layer_labels = [f"Layer {idx}" for idx in layer_indices]
