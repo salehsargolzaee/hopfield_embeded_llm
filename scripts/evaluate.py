@@ -35,12 +35,13 @@ logger = get_logger(__name__)
 
 
 def compute_answer_perplexity(
-    model: MemoryInjectedModel,
+    model,
     questions: list[str],
     answers: list[str],
     contexts: list[str] | None = None,
     use_memory: bool = False,
     desc: str = "Evaluating",
+    question_embedder=None,
 ) -> dict:
     """Compute perplexity on answer tokens under a given condition.
 
@@ -88,7 +89,15 @@ def compute_answer_perplexity(
 
             # Forward pass — with or without memory hooks
             if use_memory:
-                outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                fwd_kwargs = dict(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                # Query-pinned model needs question embedding
+                if question_embedder is not None and hasattr(model, '_question_embedding'):
+                    import numpy as np
+                    q_emb = torch.from_numpy(
+                        question_embedder.embed_texts([questions[i]])
+                    ).float().to(device)
+                    fwd_kwargs["question_embedding"] = q_emb
+                outputs = model(**fwd_kwargs)
                 logits = outputs["logits"]
             else:
                 # Bypass Hopfield hooks — run the LLM directly
@@ -177,6 +186,7 @@ def main() -> None:
     parser.add_argument("--max-samples", type=int, default=500)
     parser.add_argument("--sparse", action="store_true", help="Use sparse Hopfield model")
     parser.add_argument("--hierarchical", action="store_true", help="Use hierarchical sparse Hopfield")
+    parser.add_argument("--query-pinned", action="store_true", help="Use query-pinned Hopfield")
     args = parser.parse_args()
 
     config = OmegaConf.load(args.config)
@@ -203,7 +213,10 @@ def main() -> None:
     logger.info(f"Evaluating on {len(questions)} questions")
 
     # Build model
-    if args.hierarchical:
+    if args.query_pinned:
+        from src.model.query_pinned_model import QueryPinnedModel
+        model = QueryPinnedModel(config)
+    elif args.hierarchical:
         from src.model.hierarchical_model import HierarchicalSparseModel
         model = HierarchicalSparseModel(config)
     elif args.sparse:
@@ -211,6 +224,12 @@ def main() -> None:
         model = SparseInjectedModel(config)
     else:
         model = MemoryInjectedModel(config)
+
+    # Load question embedder if needed for query-pinned model
+    question_embedder = None
+    if args.query_pinned:
+        from src.embedding.embedder import Embedder
+        question_embedder = Embedder(config)
 
     # Load memory bank
     memory_path = Path(config.memory.output_dir) / "memory_bank.pt"
@@ -257,6 +276,7 @@ def main() -> None:
         model, questions, answers,
         contexts=None, use_memory=True,
         desc="Hopfield memory",
+        question_embedder=question_embedder,
     )
     logger.info(f"  Loss: {hopfield['avg_loss']:.4f} | Perplexity: {hopfield['perplexity']:.2f}")
 
@@ -277,6 +297,7 @@ def main() -> None:
         model, questions, answers,
         contexts=None, use_memory=True,
         desc="Half memory",
+        question_embedder=question_embedder,
     )
     logger.info(f"  Loss: {half['avg_loss']:.4f} | Perplexity: {half['perplexity']:.2f}")
 
@@ -298,6 +319,7 @@ def main() -> None:
         model, questions, answers,
         contexts=None, use_memory=True,
         desc="Random memory",
+        question_embedder=question_embedder,
     )
     logger.info(f"  Loss: {random_mem['avg_loss']:.4f} | Perplexity: {random_mem['perplexity']:.2f}")
 

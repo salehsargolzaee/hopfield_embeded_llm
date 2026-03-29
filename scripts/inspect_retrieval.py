@@ -28,6 +28,7 @@ def main():
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--hierarchical", action="store_true")
     parser.add_argument("--sparse", action="store_true")
+    parser.add_argument("--query-pinned", action="store_true")
     parser.add_argument("--max-questions", type=int, default=20)
     args = parser.parse_args()
 
@@ -41,7 +42,10 @@ def main():
     chunk_sources = [c.source_doc for c in chunks]
 
     # Load model
-    if args.hierarchical:
+    if args.query_pinned:
+        from src.model.query_pinned_model import QueryPinnedModel
+        model = QueryPinnedModel(config)
+    elif args.hierarchical:
         from src.model.hierarchical_model import HierarchicalSparseModel
         model = HierarchicalSparseModel(config)
     elif args.sparse:
@@ -75,6 +79,12 @@ def main():
         if len(questions) >= args.max_questions:
             break
 
+    # Load embedder if query-pinned
+    question_embedder = None
+    if args.query_pinned:
+        from src.embedding.embedder import Embedder
+        question_embedder = Embedder(config)
+
     model.eval()
     with torch.no_grad():
         for i, q in enumerate(questions):
@@ -82,11 +92,18 @@ def main():
             inputs = model.tokenizer(prompt, return_tensors="pt").to(device)
 
             # Forward with sparsity tracking
-            outputs = model(
+            fwd_kwargs = dict(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
                 track_sparsity=True,
             )
+            if question_embedder is not None and hasattr(model, '_question_embedding'):
+                q_emb = torch.from_numpy(
+                    question_embedder.embed_texts([q['question']])
+                ).float().to(device)
+                fwd_kwargs["question_embedding"] = q_emb
+
+            outputs = model(**fwd_kwargs)
 
             logger.info(f"\n{'='*70}")
             logger.info(f"Q{i+1}: {q['question']}")
